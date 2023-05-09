@@ -6,21 +6,23 @@
 #include <functional>
 #include <unordered_map>
 
-#include <stdio.h>
+#include <cstring>
+#include <cstdio>
 #include <pthread.h>
 #include <unistd.h>
 
-union thread_args {
-    struct {
-        uint32_t valid : 1;
-        uint32_t specific : 1;
-        uint32_t cpu_id : 6;
-        uint32_t priority : 7;
-        uint32_t rate : 14;
-        uint32_t reserved : 3;
-    }; /* data */
-    // set cpu_id = 63
-    uint32_t buffer_[1] {0x3f000000};
+#define MAJOR_VERSION 0
+#define MINOR_VERSION 1
+#define PATCH_VERSION 0
+// version string in macro, compatible with std::string
+#define VERSION_STRING "v" + std::to_string(MAJOR_VERSION) + "." + std::to_string(MINOR_VERSION) + "." + std::to_string(PATCH_VERSION)
+
+struct thread_args {
+    int8_t cpu_id = -1;
+    int8_t priority = -1;
+    uint16_t rate : 14;
+    uint16_t valid : 1;
+    uint16_t specific : 1;
 };
 
 using spacetime_t = std::chrono::microseconds;
@@ -32,31 +34,44 @@ int g_hardware_threads = std::thread::hardware_concurrency();
 std::string g_helper_str =
 // unix style helper
 "\033[1mNAME\033[0m\n"
-"    cpuocup - set cpu rate\n"
-"\033[1mSYNOPSIS\033[0m\n"
-"    \033[1mcpuocup\033[0m [\033[4mcpu_id\033[0m,\033[4mrate\033[0m] [\033[4mrate\033[0m] [\033[4mcmd\033[0m,\033[4mrate\033[0m] ...\n"
+"    cpuocup - set cpu userspace usage rate\n"
+"\033[1mVERSION\033[0m\n"
+"    " + std::string(VERSION_STRING) + "\n"
+"\033[1mUSAGE\033[0m\n"
+// can set [rate] [cpu_id,rate] [cpu_id,priority,rate] [cmd,rate] [cmd,priority,rate]
+"    \033[1mcpuocup\033[0m [\033[4mrate\033[0m] [\033[4mcpu_id\033[0m,\033[4mrate\033[0m] [\033[4mcpu_id\033[0m,\033[4mpriority\033[0m,\033[4mrate\033[0m] [\033[4mcmd\033[0m,\033[4mrate\033[0m] [\033[4mcmd\033[0m,\033[4mpriority\033[0m,\033[4mrate\033[0m] ...\n"
 "\033[1mDESCRIPTION\033[0m\n"
-"    This program is used to set cpu rate. Max " + std::to_string(g_hardware_threads) + " threads are supported.\n"
-"    \033[1mcpu_id\033[0m: cpu id, -1 means thread not bind any cpu, range: [-1, " + std::to_string(g_hardware_threads-1) + "]\n"
+"    This program is used to set cpu rate. Max " + std::to_string(g_hardware_threads) + " threads are supported at the device.\n"
 "    \033[1mrate\033[0m: thread rate, 0.0 <= rate <= 1.0\n"
+"    \033[1mcpu_id\033[0m: cpu id, -1 means thread not bind any cpu, range: [-1, " + std::to_string(g_hardware_threads-1) + "]\n"
+"    \033[1mpriority\033[0m: thread priority, range: [0, 99]\n"
+// cmd support: f, F, r, R
 "    \033[1mcmd\033[0m: f, r, F, R\n"
-"        f: set rate to all threads\n"
-"        r: set rate to all threads which rate is not set\n"
-"        F: set rate to all threads, and bind to corresponding cpu\n"
-"        R: set rate to all threads which rate is not set, and bind to corresponding cpu\n"
+"        f: set to all threads\n"
+"        r: set to all threads which is not specific\n"
+"        F: set to all threads, and bind to corresponding cpu\n"
+"        R: set to all threads which is not specific, and bind to corresponding cpu\n"
 "\033[1mEXAMPLE\033[0m\n"
-"    \033[1mcpuocup\033[0m 0,0.5 1,0.5\n"
-"        set thread0 and thread1 to 50% rate, and bind thread0 to cpu0, thread1 to cpu1\n"
-"    \033[1mcpuocup\033[0m 0,0.5 1,0.5 f,0.1\n"
-"        set all threads to 10% rate\n"
-"    \033[1mcpuocup\033[0m 0,0.5 1,0.5 r,0.1\n"
-"        set thread0 and thread1 to 50% rate, and bind thread0 to cpu0, thread1 to cpu1\n"
-"        and then set all threads which rate is not set to 10% rate\n"
-"    \033[1mcpuocup\033[0m 0,0.5 1,0.5 F,0.1\n"
-"        set all threads to 10% rate, and bind to corresponding cpu\n"
-"    \033[1mcpuocup\033[0m 0,0.5 1,0.5 R,0.1\n"
-"        set thread0 and thread1 to 50% rate, and bind thread0 to cpu0, thread1 to cpu1\n"
-"        and then set all threads which rate is not set to 10% rate, and bind to corresponding cpu\n";
+// give 5 classic examples of each usage, and explain the meaning of each example
+"    \033[1mcpuocup\033[0m 0.5 0.9\n"
+"        set thread 0 to 50% usage, and thread 1 to 90% usage\n"
+"    \033[1mcpuocup\033[0m 1,0.5\n"
+"        set thread 1 to 50% usage, and bind to cpu 1\n"
+"    \033[1mcpuocup\033[0m 1,20,0.5\n"
+"        set thread 1 to 50% usage, and bind to cpu 1, and set thread priority to 20\n"
+"    \033[1mcpuocup\033[0m f,0.5\n"
+"        set all threads to 50% usage\n"
+"    \033[1mcpuocup\033[0m 1,20,0.5, r,40,0.9\n"
+"        set thread 1 to 50% usage, and bind to cpu 1, and set thread priority to 20\n"
+"        set all threads which is not specific to 90% usage, and set thread priority to 40, and bind to corresponding cpus\n"
+"\033[1mAUTHOR\033[0m\n"
+"    Written by \033[1mcaibingcheng\033[0m.\n"
+"\033[1mREPORTING BUGS\033[0m\n"
+"    Report bugs to \033[1mjack_cbc@163.com\033[0m.\n"
+"\033[1mCOPYRIGHT\033[0m\n"
+"    This is free software: you are free to change and redistribute it.\n"
+"    There is NO WARRANTY, to the extent permitted by law.\n"
+;
 
 void process(double rate) {
     int process_time = g_interval_us.count() * rate;
@@ -70,7 +85,7 @@ void process(double rate) {
 
 void print_thread_args(const thread_args& arg) {
     // formated print & align thread_args inline
-    printf("cpu_id: %2d, priority: %2d, rate: %5.2f%%\n", arg.cpu_id == 0x3f ? -1 : arg.cpu_id, arg.priority, arg.rate / g_rate_base * 100);
+    printf("cpu_id: %2d, priority: %2d, rate: %5.2f%%\n", arg.cpu_id, arg.priority, arg.rate / g_rate_base * 100);
 }
 
 void help() {
@@ -80,11 +95,19 @@ void help() {
 
 template<typename ...ARGS>
 void invalid_usage(const char* fmt, ARGS... args) {
-    std::cout << "Invalid usage: ";
+    // highlight invalid usage
+    printf("\033[1m");
     printf(fmt, args...);
-    std::cout << std::endl;
-    std::cout << g_helper_str << std::endl;
+    printf("\033[0m\n\n");
+    help();
     exit(1);
+}
+
+template<typename ...ARGS>
+void check(bool cond, const char* str) {
+    if (!cond) {
+        invalid_usage("%s", str);
+    }
 }
 
 template<typename ...ARGS>
@@ -95,7 +118,7 @@ void check(bool cond, const char* fmt, ARGS... args) {
 }
 
 bool parse_from_cpuid_prioriy_rate(thread_args& arg, const char* str) {
-    int cpu_id = 0x3f;
+    int cpu_id = -1;
     float rate = 0.0;
     int priority = 0;
     if (sscanf(str, "%d,%d,%f", &cpu_id, &priority, &rate) != 3) {
@@ -113,7 +136,7 @@ bool parse_from_cpuid_prioriy_rate(thread_args& arg, const char* str) {
 }
 
 bool parse_from_cpuid_rate(thread_args& arg, const char* str) {
-    int cpu_id = 0x3f;
+    int cpu_id = -1;
     float rate = 0.0;
     if (sscanf(str, "%d,%f", &cpu_id, &rate) != 2) {
         return false;
@@ -153,14 +176,14 @@ std::unordered_map<char, cmd_job_t> g_cmd_jobs = {
     }},
     {'r', [](std::vector<thread_args>& args, thread_args& arg) {
         for (auto i = 0; i < args.size(); ++i) {
-            if (!args[i].valid) {
+            if (!args[i].specific) {
                 args[i] = arg;
             }
         }
     }},
     {'R', [](std::vector<thread_args>& args, thread_args& arg) {
         for (auto i = 0; i < args.size(); ++i) {
-            if (!args[i].valid) {
+            if (!args[i].specific) {
                 args[i] = arg;
                 args[i].cpu_id = i;
             }
@@ -197,12 +220,18 @@ bool parse_from_cmd_rate(std::vector<thread_args>& args, thread_args& arg, const
 }
 
 std::vector<thread_args> parse_args(int argc, char** argv) {
+    // process -h, --help first
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+        help();
+        exit(0);
+    }
+
     // check argc, argc should less than hardware threads
     check(argc <= g_hardware_threads + 1, "Too many arguments, max %d arguments allowed", g_hardware_threads);
     std::vector<thread_args> args(g_hardware_threads, thread_args());
     for (auto i = 1; i < argc; ++i) {
         thread_args arg;
-        arg.valid = true;
+        arg.valid = 1;
 
         bool parse_ok = parse_from_cpuid_prioriy_rate(arg, argv[i]) ||
                         parse_from_cpuid_rate(arg, argv[i]) ||
@@ -225,14 +254,31 @@ void startup(std::vector<thread_args>& args) {
             continue;
         }
 
-        print_thread_args(arg);
         threads.emplace_back(process, arg.rate / g_rate_base);
-        if (arg.cpu_id < 0x3f) {
+        if (arg.cpu_id >= 0) {
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
             CPU_SET(arg.cpu_id, &cpuset);
             pthread_setaffinity_np(threads.back().native_handle(), sizeof(cpu_set_t), &cpuset);
+
+            // check if cpu affinity set success
+            cpu_set_t get;
+            CPU_ZERO(&get);
+            pthread_getaffinity_np(threads.back().native_handle(), sizeof(cpu_set_t), &get);
+            check(CPU_ISSET(arg.cpu_id, &get), "Set cpu affinity failed");
         }
+        if (arg.priority >= 0) {
+            struct sched_param param;
+            param.sched_priority = arg.priority;
+            pthread_setschedparam(threads.back().native_handle(), SCHED_FIFO, &param);
+
+            // check if priority set success
+            int policy;
+            pthread_getschedparam(threads.back().native_handle(), &policy, &param);
+            check(param.sched_priority == arg.priority, "Set priority failed");
+        }
+
+        print_thread_args(arg);
     }
 
     for (auto& thread : threads) {
@@ -244,6 +290,5 @@ int main(int argc, char** argv) {
     auto args = parse_args(argc, argv);
     startup(args);
 
-    help();
 	return 0;
 }
