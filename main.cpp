@@ -265,7 +265,7 @@ void startup(std::vector<thread_args>& args) {
             cpu_set_t get;
             CPU_ZERO(&get);
             pthread_getaffinity_np(threads.back().native_handle(), sizeof(cpu_set_t), &get);
-            check(CPU_ISSET(arg.cpu_id, &get), "Set cpu affinity failed");
+            check(CPU_ISSET(arg.cpu_id, &get), "Set cpu affinity failed, %s", strerror(errno));
         }
         if (arg.priority >= 0) {
             struct sched_param param;
@@ -275,7 +275,7 @@ void startup(std::vector<thread_args>& args) {
             // check if priority set success
             int policy;
             pthread_getschedparam(threads.back().native_handle(), &policy, &param);
-            check(param.sched_priority == arg.priority, "Set priority failed");
+            check(param.sched_priority == arg.priority, "Set priority failed, %s", strerror(errno));
         }
 
         print_thread_args(arg);
