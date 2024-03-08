@@ -8,6 +8,8 @@ cpuocup is a simple tool to consume cpu resources. I wrote it just for fun and t
 git clone https://github.com/caibingcheng/cpuocup.git
 cd cpuocup
 g++ main.cpp -o cpuocup -pthread
+# cross compile on arm
+# aarch64-linux-gnu-g++ main.cpp -o cpuocup -pthread
 ```
 
 ## Usage
